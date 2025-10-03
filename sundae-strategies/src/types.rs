@@ -55,7 +55,14 @@ impl From<(Vec<u8>, Vec<u8>)> for AssetId {
     }
 }
 
+impl PartialEq<InlineAssetId> for AssetId {
+    fn eq(&self, other: &InlineAssetId) -> bool {
+        self.policy_id == other.0 && self.asset_name == other.1
+    }
+}
+
 pub type InlineAssetId = (Vec<u8>, Vec<u8>);
+
 #[derive(AsPlutus, Serialize, Deserialize, Debug, Clone)]
 pub struct PoolDatum {
     pub identifier: Vec<u8>,

@@ -16,7 +16,7 @@ use utxorpc_spec::utxorpc::v1alpha::cardano::TxOutput;
 use crate::{
     keys::get_signer_key,
     types::{
-        Interval, Order, OrderDatum, OutputReference, PoolDatum, SignedStrategyExecution,
+        AssetId, Interval, Order, OrderDatum, OutputReference, PoolDatum, SignedStrategyExecution,
         StrategyAuthorization, StrategyExecution, SubmitSSE, TransactionId, serialize,
     },
 };
@@ -61,6 +61,17 @@ pub struct ManagedStrategy {
     pub order: OrderDatum,
 }
 
+impl ManagedStrategy {
+    pub fn submit_execution(
+        &self,
+        network: &Network,
+        validity_range: Interval,
+        details: Order,
+    ) -> Result<HttpResponse, balius_sdk::Error> {
+        submit_execution(network, &self.output, validity_range, details)
+    }
+}
+
 /// Information about a Sundae pool
 #[derive(Debug, Clone)]
 pub struct PoolState {
@@ -72,6 +83,31 @@ pub struct PoolState {
     pub utxo: TxOutput,
     /// The parsed pool datum.
     pub pool_datum: PoolDatum,
+}
+
+impl PoolState {
+    /// Returns true if this is a pool for the relevant tokens
+    pub fn pool_tokens_match_config(&self, a: &AssetId, b: &AssetId) -> bool {
+        let (asset_a, asset_b) = &self.pool_datum.assets;
+        (a == asset_a && b == asset_b) || (a == asset_b && b == asset_a)
+    }
+
+    // Returns the real pool price scaled by the token decimals
+    pub fn price(&self, sell_token_decimals: i32, buy_token_decimals: i32) -> f64 {
+        let raw_price = self.pool_datum.raw_price(&self.utxo);
+        let scale_factor = 10f64.powi(sell_token_decimals - buy_token_decimals);
+        raw_price * scale_factor
+    }
+
+    // Returns the validity range in milliseconds relative to the current slot
+    pub fn get_validity_range(&self, network: &Network, seconds: u64) -> Interval {
+        let now_ms = network.to_unix_time(self.slot);
+        let delta_ms = seconds.saturating_mul(1000);
+
+        let start = now_ms.saturating_sub(delta_ms);
+        let end = now_ms.saturating_add(delta_ms);
+        Interval::inclusive_range(start, end)
+    }
 }
 
 pub type NewStrategyCallback<T> = fn(&Config<T>, &ManagedStrategy) -> WorkerResult<Ack>;

@@ -14,6 +14,16 @@ impl AssetId {
     pub fn is_ada(&self) -> bool {
         self.policy_id.is_empty() && self.asset_name.is_empty()
     }
+
+    pub fn name_to_string(&self) -> String {
+        if self.is_ada() {
+            return "ADA".to_string();
+        } else if let Ok(name) = String::from_utf8(self.asset_name.clone()) {
+            name
+        } else {
+            hex::encode(&self.asset_name)
+        }
+    }
 }
 
 struct AssetIdVisitor;
@@ -120,13 +130,16 @@ impl PoolDatum {
         let asset_b: AssetId = self.assets.1.clone().into();
 
         let reserves_a = if asset_a.is_ada() {
-            output.coin
-                - to_u64(&self.protocol_fees)
-                    .expect("the pool protocol fees should never exceed u64 max")
+            let fee = to_u64(&self.protocol_fees).unwrap_or(0);
+            output.coin.saturating_sub(fee)
         } else {
             asset_amount(output, &asset_a)
         };
         let reserves_b = asset_amount(output, &asset_b);
+
+        if reserves_b == 0 {
+            return 0.0;
+        }
 
         (reserves_a as f64) / (reserves_b as f64)
     }

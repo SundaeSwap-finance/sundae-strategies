@@ -86,17 +86,24 @@ pub struct PoolState {
 }
 
 impl PoolState {
-    /// Returns true if this is a pool for the relevant tokens
-    pub fn pool_tokens_match_config(&self, a: &AssetId, b: &AssetId) -> bool {
-        let (asset_a, asset_b) = &self.pool_datum.assets;
-        (a == asset_a && b == asset_b) || (a == asset_b && b == asset_a)
+    /// Returns true if the pool is relevant to the provided order
+    pub fn is_correct_pool(
+        &self,
+        order: &OrderDatum,
+        token_a: &AssetId,
+        token_b: &AssetId,
+    ) -> bool {
+        if let Some(specific_pool) = &order.pool_ident {
+            self.pool_datum.identifier == *specific_pool
+        } else {
+            let (asset_a, asset_b) = &self.pool_datum.assets;
+            (token_a == asset_a && token_b == asset_b) || (token_a == asset_b && token_b == asset_a)
+        }
     }
 
-    // Returns the real pool price scaled by the token decimals
-    pub fn price(&self, sell_token_decimals: i32, buy_token_decimals: i32) -> f64 {
-        let raw_price = self.pool_datum.raw_price(&self.utxo);
-        let scale_factor = 10f64.powi(sell_token_decimals - buy_token_decimals);
-        raw_price * scale_factor
+    pub fn price(&self, token_a_decimals: u8, token_b_decimals: u8) -> f64 {
+        let raw = self.pool_datum.raw_price(&self.utxo);
+        raw * 10f64.powi(token_a_decimals as i32 - token_b_decimals as i32)
     }
 
     // Returns the validity range in milliseconds relative to the current slot

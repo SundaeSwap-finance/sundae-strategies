@@ -17,7 +17,7 @@ impl AssetId {
 
     pub fn name_to_string(&self) -> String {
         if self.is_ada() {
-            return "ADA".to_string();
+            "ADA".to_string()
         } else if let Ok(name) = String::from_utf8(self.asset_name.clone()) {
             name
         } else {

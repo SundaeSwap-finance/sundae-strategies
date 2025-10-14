@@ -16,7 +16,7 @@ use utxorpc_spec::utxorpc::v1alpha::cardano::TxOutput;
 use crate::{
     keys::get_signer_key,
     types::{
-        Interval, Order, OrderDatum, OutputReference, PoolDatum, SignedStrategyExecution,
+        AssetId, Interval, Order, OrderDatum, OutputReference, PoolDatum, SignedStrategyExecution,
         StrategyAuthorization, StrategyExecution, SubmitSSE, TransactionId, serialize,
     },
 };
@@ -61,6 +61,17 @@ pub struct ManagedStrategy {
     pub order: OrderDatum,
 }
 
+impl ManagedStrategy {
+    pub fn submit_execution(
+        &self,
+        network: &Network,
+        validity_range: Interval,
+        details: Order,
+    ) -> Result<HttpResponse, balius_sdk::Error> {
+        submit_execution(network, &self.output, validity_range, details)
+    }
+}
+
 /// Information about a Sundae pool
 #[derive(Debug, Clone)]
 pub struct PoolState {
@@ -72,6 +83,38 @@ pub struct PoolState {
     pub utxo: TxOutput,
     /// The parsed pool datum.
     pub pool_datum: PoolDatum,
+}
+
+impl PoolState {
+    /// Returns true if the pool is relevant to the provided order
+    pub fn is_correct_pool(
+        &self,
+        order: &OrderDatum,
+        token_a: &AssetId,
+        token_b: &AssetId,
+    ) -> bool {
+        if let Some(specific_pool) = &order.pool_ident {
+            self.pool_datum.identifier == *specific_pool
+        } else {
+            let (asset_a, asset_b) = &self.pool_datum.assets;
+            (token_a == asset_a && token_b == asset_b) || (token_a == asset_b && token_b == asset_a)
+        }
+    }
+
+    pub fn price(&self, token_a_decimals: u8, token_b_decimals: u8) -> f64 {
+        let raw = self.pool_datum.raw_price(&self.utxo);
+        raw * 10f64.powi(token_a_decimals as i32 - token_b_decimals as i32)
+    }
+
+    // Returns the validity range in milliseconds relative to the current slot
+    pub fn get_validity_range(&self, network: &Network, seconds: u64) -> Interval {
+        let now_ms = network.to_unix_time(self.slot);
+        let delta_ms = seconds.saturating_mul(1000);
+
+        let start = now_ms.saturating_sub(delta_ms);
+        let end = now_ms.saturating_add(delta_ms);
+        Interval::inclusive_range(start, end)
+    }
 }
 
 pub type NewStrategyCallback<T> = fn(&Config<T>, &ManagedStrategy) -> WorkerResult<Ack>;

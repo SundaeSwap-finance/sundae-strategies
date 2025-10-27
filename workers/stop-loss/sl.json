@@ -1,9 +1,9 @@
 {
   "network": "preview",
-  "token_a": "2fe3c3364b443194b10954771c95819b8d6ed464033c21f03f8facb5.69425443",
-  "token_a_decimals": 0,
-  "token_b": ".",
-  "token_b_decimals": 6,
-  "sell_token": "2fe3c3364b443194b10954771c95819b8d6ed464033c21f03f8facb5.69425443",
-  "execution_price": 0.425
+  "token_a": ".",
+  "token_a_decimals": 6,
+  "token_b": "99b071ce8580d6a3a11b4902145adb8bfd0d2a03935af8cf66403e15.534245525259",
+  "token_b_decimals": 0,
+  "sell_token": "99b071ce8580d6a3a11b4902145adb8bfd0d2a03935af8cf66403e15.534245525259",
+  "execution_price": 0.000168
 }

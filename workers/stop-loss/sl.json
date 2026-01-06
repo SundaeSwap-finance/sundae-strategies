@@ -1,0 +1,9 @@
+{
+  "network": "preview",
+  "token_a": ".",
+  "token_a_decimals": 6,
+  "token_b": "99b071ce8580d6a3a11b4902145adb8bfd0d2a03935af8cf66403e15.534245525259",
+  "token_b_decimals": 0,
+  "sell_token": "99b071ce8580d6a3a11b4902145adb8bfd0d2a03935af8cf66403e15.534245525259",
+  "execution_price": 0.000168
+}

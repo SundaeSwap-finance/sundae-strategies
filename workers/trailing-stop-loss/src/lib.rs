@@ -67,7 +67,6 @@ fn on_new_pool_state(
     let now = config.network.to_unix_time(pool_state.slot);
 
     // Get the current trigger price for this pool (0.0 if not yet set)
-    // Made mutable so we can update it after initialization
     let mut trigger_price = kv::get::<f64>(&trigger_price_key(&pool_ident))?.unwrap_or(0.0);
 
     info!(
@@ -75,68 +74,54 @@ fn on_new_pool_state(
         pool_price, trigger_price
     );
 
-    // Track if any strategy has a position (for trigger price updates)
     let mut any_has_position = false;
-    // Track if this is the first observation (trigger price was just initialized)
-    // All strategies should skip exit checks on the first observation
-    let mut first_observation = false;
 
-    // Initialize trigger_price if this is the first time seeing a position with any strategy
-    if trigger_price.abs() < f64::EPSILON {
-        // Check if any strategy has a position
-        let has_any_position = strategies
-            .iter()
-            .any(|s| asset_amount(&s.utxo, &config.position_token) > 0);
-
-        if has_any_position {
-            let initial_trigger_price = pool_price * (1. - config.trail_percent);
-            info!(
-                "initializing trigger price to {} ({}% below current price {})",
-                initial_trigger_price,
-                config.trail_percent * 100.0,
-                pool_price
-            );
-            kv::set(&trigger_price_key(&pool_ident), &initial_trigger_price)?;
-            trigger_price = initial_trigger_price;
-            first_observation = true;
-            any_has_position = true;
+    for strategy in strategies {
+        // Skip processing for state changes of unrelated pools
+        if !pool_state.is_correct_pool(&strategy.order, &config.position_token, &config.exit_token) {
+            continue;
         }
-    }
 
-    // Process each strategy based on its token holdings (skip exit checks on first observation)
-    if !first_observation {
-        for strategy in strategies {
-            let position_amount = asset_amount(&strategy.utxo, &config.position_token);
+        let position_amount = asset_amount(&strategy.utxo, &config.position_token);
 
-            // Only act if strategy has position tokens to protect
-            if position_amount > 0 {
-                any_has_position = true;
+        // Only act if strategy has position tokens to protect
+        if position_amount > 0 {
+            any_has_position = true;
 
-                // Check if TSL should trigger
-                if pool_price < trigger_price {
-                    info!(
-                        "TSL triggered: price {} < trigger_price {}. Exiting position...",
-                        pool_price, trigger_price
-                    );
-                    trigger_exit(config, now, strategy)?;
-                }
+            // Initialize trigger_price on first observation
+            if trigger_price == 0.0 {
+                trigger_price = pool_price * (1. - config.trail_percent);
+                info!(
+                    "initializing trigger price to {} ({}% below current price {})",
+                    trigger_price,
+                    config.trail_percent * 100.0,
+                    pool_price
+                );
+                kv::set(&trigger_price_key(&pool_ident), &trigger_price)?;
+            }
+
+            // Check if TSL should trigger
+            if pool_price < trigger_price {
+                info!(
+                    "TSL triggered: price {} < trigger_price {}. Exiting position...",
+                    pool_price, trigger_price
+                );
+                trigger_exit(config, now, strategy)?;
             }
         }
     }
 
     // Update the trailing trigger price (only goes up) if any strategy has a position
-    // Skip if trigger_price is effectively 0.0 (will be initialized above on next call)
-    if any_has_position && trigger_price.abs() > f64::EPSILON {
+    if any_has_position && trigger_price > 0.0 {
         let new_trigger_price = f64::max(trigger_price, pool_price * (1. - config.trail_percent));
 
         if (new_trigger_price - trigger_price).abs() > f64::EPSILON {
             info!("trailing trigger price up to {}", new_trigger_price);
             kv::set(&trigger_price_key(&pool_ident), &new_trigger_price)?;
         }
-    } else if !any_has_position && trigger_price.abs() > f64::EPSILON {
-        // All positions have been exited; clear the stored trigger price so that
-        // future entries can reinitialize the trailing stop from the new entry price.
-        info!("no active positions; resetting trigger price to 0.0");
+    } else if !any_has_position && trigger_price > 0.0 {
+        // All positions exited; reset trigger price for future entries
+        info!("no active positions; resetting trigger price");
         kv::set(&trigger_price_key(&pool_ident), &0.0_f64)?;
     }
 

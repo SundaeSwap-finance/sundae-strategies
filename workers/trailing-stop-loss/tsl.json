@@ -1,6 +1,6 @@
 {
   "network": "preview",
-  "give_token": "99b071ce8580d6a3a11b4902145adb8bfd0d2a03935af8cf66403e15.524245525259",
-  "receive_token": ".",
+  "position_token": "99b071ce8580d6a3a11b4902145adb8bfd0d2a03935af8cf66403e15.524245525259",
+  "exit_token": ".",
   "trail_percent": 0.15
 }

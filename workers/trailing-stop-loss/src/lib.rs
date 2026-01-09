@@ -7,9 +7,8 @@
 //! The strategy expects to receive a UTxO that already contains the position token
 //! (via atomic entry from the frontend). It then monitors price movements:
 //!
-//! - **Price goes up**: The trigger price "trails" upward toward
-//!   `current_price * (1 - trail_percent)` whenever the price reaches a new high,
-//!   and stays unchanged when the price moves sideways or down. This locks in gains
+//! - **Price goes up**: The peak price updates to the new high, and trigger price
+//!   is recalculated as `peak_price * (1 - trail_percent)`. This locks in gains
 //!   as the price rises.
 //!
 //! - **Price goes down**: If the price drops below the trigger price, the strategy
@@ -51,10 +50,10 @@ use sundae_strategies::{
 };
 use tracing::info;
 
-pub const TRIGGER_PRICE_PREFIX: &str = "trigger_price:";
+pub const PEAK_PRICE_PREFIX: &str = "peak_price:";
 
-fn trigger_price_key(pool_ident: &str) -> String {
-    format!("{TRIGGER_PRICE_PREFIX}{pool_ident}")
+fn peak_price_key(pool_ident: &str) -> String {
+    format!("{PEAK_PRICE_PREFIX}{pool_ident}")
 }
 
 #[allow(clippy::ptr_arg)] // Signature must match NewPoolStateCallback type
@@ -65,7 +64,7 @@ fn on_new_pool_state(
 ) -> WorkerResult<Ack> {
     let pool_price = pool_state.pool_datum.raw_price(&pool_state.utxo);
     let pool_ident = hex::encode(&pool_state.pool_datum.identifier);
-    let key = trigger_price_key(&pool_ident);
+    let key = peak_price_key(&pool_ident);
     let now = config.network.to_unix_time(pool_state.slot);
 
     // Filter to strategies with positions in this pool
@@ -77,34 +76,34 @@ fn on_new_pool_state(
         .filter(|s| asset_amount(&s.utxo, &config.position_token) > 0)
         .collect();
 
-    let trigger_price = kv::get::<f64>(&key)?.unwrap_or(0.0);
-    info!("pool update: price={pool_price}, trigger_price={trigger_price}");
+    let peak_price = kv::get::<f64>(&key)?.unwrap_or(0.0);
+    let trigger_price = peak_price * (1.0 - config.trail_percent);
+    info!("pool update: price={pool_price}, peak={peak_price}, trigger={trigger_price}");
 
-    // No active positions - reset trigger price if it was set
+    // No active positions - reset peak price if it was set
     if active.is_empty() {
-        if trigger_price > 0.0 {
-            info!("no active positions; resetting trigger price");
+        if peak_price > 0.0 {
+            info!("no active positions; resetting peak price");
             kv::set(&key, &0.0_f64)?;
         }
         return Ok(Ack);
     }
 
-    // Initialize or trail trigger price upward
-    let new_trigger = pool_price * (1.0 - config.trail_percent);
-    let trigger_price = if trigger_price == 0.0 {
-        info!(
-            "initializing trigger price to {new_trigger} ({}% below {pool_price})",
-            config.trail_percent * 100.0
-        );
-        kv::set(&key, &new_trigger)?;
-        new_trigger
-    } else if new_trigger > trigger_price {
-        info!("trailing trigger price up to {new_trigger}");
-        kv::set(&key, &new_trigger)?;
-        new_trigger
+    // Update peak price (only goes up)
+    let peak_price = if pool_price > peak_price {
+        if peak_price == 0.0 {
+            info!("initializing peak price to {pool_price}");
+        } else {
+            info!("updating peak price to {pool_price}");
+        }
+        kv::set(&key, &pool_price)?;
+        pool_price
     } else {
-        trigger_price
+        peak_price
     };
+
+    // Calculate trigger from (possibly updated) peak - always uses current trail_percent
+    let trigger_price = peak_price * (1.0 - config.trail_percent);
 
     // Check if TSL should trigger for each active strategy
     if pool_price < trigger_price {

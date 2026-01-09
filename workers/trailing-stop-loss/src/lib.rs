@@ -64,65 +64,51 @@ fn on_new_pool_state(
 ) -> WorkerResult<Ack> {
     let pool_price = pool_state.pool_datum.raw_price(&pool_state.utxo);
     let pool_ident = hex::encode(&pool_state.pool_datum.identifier);
+    let key = trigger_price_key(&pool_ident);
     let now = config.network.to_unix_time(pool_state.slot);
 
-    // Get the current trigger price for this pool (0.0 if not yet set)
-    let mut trigger_price = kv::get::<f64>(&trigger_price_key(&pool_ident))?.unwrap_or(0.0);
+    // Filter to strategies with positions in this pool
+    let active: Vec<_> = strategies
+        .iter()
+        .filter(|s| pool_state.is_correct_pool(&s.order, &config.position_token, &config.exit_token))
+        .filter(|s| asset_amount(&s.utxo, &config.position_token) > 0)
+        .collect();
 
-    info!(
-        "pool update: price={}, trigger_price={}",
-        pool_price, trigger_price
-    );
+    let trigger_price = kv::get::<f64>(&key)?.unwrap_or(0.0);
+    info!("pool update: price={pool_price}, trigger_price={trigger_price}");
 
-    let mut any_has_position = false;
-
-    for strategy in strategies {
-        // Skip processing for state changes of unrelated pools
-        if !pool_state.is_correct_pool(&strategy.order, &config.position_token, &config.exit_token) {
-            continue;
+    // No active positions - reset trigger price if it was set
+    if active.is_empty() {
+        if trigger_price > 0.0 {
+            info!("no active positions; resetting trigger price");
+            kv::set(&key, &0.0_f64)?;
         }
-
-        let position_amount = asset_amount(&strategy.utxo, &config.position_token);
-
-        // Only act if strategy has position tokens to protect
-        if position_amount > 0 {
-            any_has_position = true;
-
-            // Initialize trigger_price on first observation
-            if trigger_price == 0.0 {
-                trigger_price = pool_price * (1. - config.trail_percent);
-                info!(
-                    "initializing trigger price to {} ({}% below current price {})",
-                    trigger_price,
-                    config.trail_percent * 100.0,
-                    pool_price
-                );
-                kv::set(&trigger_price_key(&pool_ident), &trigger_price)?;
-            }
-
-            // Check if TSL should trigger
-            if pool_price < trigger_price {
-                info!(
-                    "TSL triggered: price {} < trigger_price {}. Exiting position...",
-                    pool_price, trigger_price
-                );
-                trigger_exit(config, now, strategy)?;
-            }
-        }
+        return Ok(Ack);
     }
 
-    // Update the trailing trigger price (only goes up) if any strategy has a position
-    if any_has_position && trigger_price > 0.0 {
-        let new_trigger_price = f64::max(trigger_price, pool_price * (1. - config.trail_percent));
+    // Initialize or trail trigger price upward
+    let new_trigger = pool_price * (1.0 - config.trail_percent);
+    let trigger_price = if trigger_price == 0.0 {
+        info!(
+            "initializing trigger price to {new_trigger} ({}% below {pool_price})",
+            config.trail_percent * 100.0
+        );
+        kv::set(&key, &new_trigger)?;
+        new_trigger
+    } else if new_trigger > trigger_price {
+        info!("trailing trigger price up to {new_trigger}");
+        kv::set(&key, &new_trigger)?;
+        new_trigger
+    } else {
+        trigger_price
+    };
 
-        if (new_trigger_price - trigger_price).abs() > f64::EPSILON {
-            info!("trailing trigger price up to {}", new_trigger_price);
-            kv::set(&trigger_price_key(&pool_ident), &new_trigger_price)?;
+    // Check if TSL should trigger for each active strategy
+    if pool_price < trigger_price {
+        info!("TSL triggered: price {pool_price} < trigger {trigger_price}");
+        for strategy in active {
+            trigger_exit(config, now, strategy)?;
         }
-    } else if !any_has_position && trigger_price > 0.0 {
-        // All positions exited; reset trigger price for future entries
-        info!("no active positions; resetting trigger price");
-        kv::set(&trigger_price_key(&pool_ident), &0.0_f64)?;
     }
 
     Ok(Ack)

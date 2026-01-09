@@ -60,7 +60,7 @@ fn trigger_price_key(pool_ident: &str) -> String {
 fn on_new_pool_state(
     config: &Config<StrategyConfig>,
     pool_state: &PoolState,
-    strategies: &Vec<ManagedStrategy>,
+    strategies: &[ManagedStrategy],
 ) -> WorkerResult<Ack> {
     let pool_price = pool_state.pool_datum.raw_price(&pool_state.utxo);
     let pool_ident = hex::encode(&pool_state.pool_datum.identifier);

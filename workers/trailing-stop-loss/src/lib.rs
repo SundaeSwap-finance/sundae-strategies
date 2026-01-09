@@ -71,7 +71,7 @@ fn on_new_pool_state(
 
     // Process each strategy based on its token holdings
     for strategy in strategies {
-        let position_amount = asset_amount(&strategy.utxo, &config.custom.position_token);
+        let position_amount = asset_amount(&strategy.utxo, &config.position_token);
 
         // Only act if strategy has position tokens to protect
         if position_amount > 0 {
@@ -79,11 +79,11 @@ fn on_new_pool_state(
 
             // Initialize trigger_price if this is the first time seeing a position
             if trigger_price == 0.0 {
-                let initial_trigger_price = pool_price * (1. - config.custom.trail_percent);
+                let initial_trigger_price = pool_price * (1. - config.trail_percent);
                 info!(
                     "initializing trigger price to {} ({}% below current price {})",
                     initial_trigger_price,
-                    config.custom.trail_percent * 100.0,
+                    config.trail_percent * 100.0,
                     pool_price
                 );
                 kv::set(&trigger_price_key(&pool_ident), &initial_trigger_price)?;
@@ -100,7 +100,7 @@ fn on_new_pool_state(
                     "TSL triggered: price {} < trigger_price {}. Exiting position...",
                     pool_price, trigger_price
                 );
-                trigger_exit(&config.custom, now, strategy)?;
+                trigger_exit(config, now, strategy)?;
             }
         }
     }
@@ -108,7 +108,7 @@ fn on_new_pool_state(
     // Update the trailing trigger price (only goes up) if any strategy has a position
     // Skip if trigger_price is 0.0 (will be initialized above on next call)
     if any_has_position && trigger_price > 0.0 {
-        let new_trigger_price = f64::max(trigger_price, pool_price * (1. - config.custom.trail_percent));
+        let new_trigger_price = f64::max(trigger_price, pool_price * (1. - config.trail_percent));
 
         if (new_trigger_price - trigger_price).abs() > f64::EPSILON {
             info!("trailing trigger price up to {}", new_trigger_price);
@@ -121,7 +121,7 @@ fn on_new_pool_state(
 
 /// Exit: Swap position_token back to exit_token when TSL triggers
 fn trigger_exit(
-    config: &StrategyConfig,
+    config: &Config<StrategyConfig>,
     now: u64,
     strategy: &ManagedStrategy,
 ) -> WorkerResult<Ack> {

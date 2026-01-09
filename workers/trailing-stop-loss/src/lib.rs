@@ -1,3 +1,35 @@
+//! # Trailing Stop Loss (TSL) Strategy
+//!
+//! This strategy protects a token position with a trailing stop loss.
+//!
+//! ## How It Works
+//!
+//! The strategy expects to receive a UTxO that already contains the position token
+//! (via atomic entry from the frontend). It then monitors price movements:
+//!
+//! - **Price goes up**: The trigger price "trails" upward, always staying at
+//!   `peak_price * (1 - trail_percent)`. This locks in gains as the price rises.
+//!
+//! - **Price goes down**: If the price drops below the trigger price, the strategy
+//!   exits the position, selling all `position_token` for `exit_token`.
+//!
+//! ## Example
+//!
+//! With `trail_percent = 0.15` (15%):
+//!
+//! 1. Position entered at price 100 → trigger price = 85
+//! 2. Price rises to 120 → trigger price trails up to 102
+//! 3. Price rises to 150 → trigger price trails up to 127.5
+//! 4. Price drops to 125 → below trigger price 127.5? Stop loss triggered! Exit position.
+//!
+//! The strategy captured gains from 100→125 instead of riding it back down.
+//!
+//! ## Configuration
+//!
+//! - `position_token`: The token being protected (what you're holding)
+//! - `exit_token`: The token to swap into when TSL triggers
+//! - `trail_percent`: How far below the peak the stop triggers (0.15 = 15%)
+
 mod config;
 
 use std::time::Duration;
@@ -10,9 +42,10 @@ use sundae_strategies::{
 };
 use tracing::info;
 
-pub const BASE_PRICE_PREFIX: &str = "base_price:";
-fn base_price_key(pool_ident: &String) -> String {
-    format!("{BASE_PRICE_PREFIX}{pool_ident}")
+pub const TRIGGER_PRICE_PREFIX: &str = "trigger_price:";
+
+fn trigger_price_key(pool_ident: &str) -> String {
+    format!("{TRIGGER_PRICE_PREFIX}{pool_ident}")
 }
 
 fn on_new_pool_state(
@@ -22,62 +55,97 @@ fn on_new_pool_state(
 ) -> WorkerResult<Ack> {
     let pool_price = pool_state.pool_datum.raw_price(&pool_state.utxo);
     let pool_ident = hex::encode(&pool_state.pool_datum.identifier);
+    let now = config.network.to_unix_time(pool_state.slot);
 
-    let base_price = kv::get::<f64>(base_price_key(&pool_ident).as_str())?.unwrap_or(0.0);
+    // Get the current trigger price for this pool (0.0 if not yet set)
+    // Made mutable so we can update it after initialization
+    let mut trigger_price = kv::get::<f64>(&trigger_price_key(&pool_ident))?.unwrap_or(0.0);
 
     info!(
-        "pool update found, with price {} against base price {}",
-        pool_price, base_price
+        "pool update: price={}, trigger_price={}",
+        pool_price, trigger_price
     );
 
-    if pool_price < base_price {
-        info!(
-            "price has fallen to {}, below the base price of {}. Triggering a sell order...",
-            pool_price, base_price,
-        );
-        for strategy in strategies {
-            trigger_sell(
-                config,
-                config.network.to_unix_time(pool_state.slot),
-                strategy,
-            )?;
+    // Track if any strategy has a position (for trigger price updates)
+    let mut any_has_position = false;
+
+    // Process each strategy based on its token holdings
+    for strategy in strategies {
+        let position_amount = asset_amount(&strategy.utxo, &config.custom.position_token);
+
+        // Only act if strategy has position tokens to protect
+        if position_amount > 0 {
+            any_has_position = true;
+
+            // Initialize trigger_price if this is the first time seeing a position
+            if trigger_price == 0.0 {
+                let initial_trigger_price = pool_price * (1. - config.custom.trail_percent);
+                info!(
+                    "initializing trigger price to {} ({}% below current price {})",
+                    initial_trigger_price,
+                    config.custom.trail_percent * 100.0,
+                    pool_price
+                );
+                kv::set(&trigger_price_key(&pool_ident), &initial_trigger_price)?;
+                // Update local variable so subsequent strategies in this loop
+                // don't re-initialize (fixes multi-strategy race condition)
+                trigger_price = initial_trigger_price;
+                // Don't trigger exit on first observation - let the trailing begin
+                continue;
+            }
+
+            // Check if TSL should trigger
+            if pool_price < trigger_price {
+                info!(
+                    "TSL triggered: price {} < trigger_price {}. Exiting position...",
+                    pool_price, trigger_price
+                );
+                trigger_exit(&config.custom, now, strategy)?;
+            }
         }
     }
 
-    let new_base_price: f64 = f64::max(base_price, pool_price * (1. - config.trail_percent));
-    if new_base_price != base_price {
-        info!("updating new base price to {}", new_base_price);
-        kv::set(base_price_key(&pool_ident).as_str(), &new_base_price)?;
+    // Update the trailing trigger price (only goes up) if any strategy has a position
+    // Skip if trigger_price is 0.0 (will be initialized above on next call)
+    if any_has_position && trigger_price > 0.0 {
+        let new_trigger_price = f64::max(trigger_price, pool_price * (1. - config.custom.trail_percent));
+
+        if (new_trigger_price - trigger_price).abs() > f64::EPSILON {
+            info!("trailing trigger price up to {}", new_trigger_price);
+            kv::set(&trigger_price_key(&pool_ident), &new_trigger_price)?;
+        }
     }
 
     Ok(Ack)
 }
 
-fn trigger_sell(
+/// Exit: Swap position_token back to exit_token when TSL triggers
+fn trigger_exit(
     config: &StrategyConfig,
     now: u64,
     strategy: &ManagedStrategy,
 ) -> WorkerResult<Ack> {
     let valid_for = Duration::from_secs_f64(20. * 60.);
     let validity_range = Interval::inclusive_range(
-        now - valid_for.as_millis() as u64,
+        now.saturating_sub(valid_for.as_millis() as u64),
         now + valid_for.as_millis() as u64,
     );
 
     let swap = Order::Swap {
         offer: (
-            config.give_token.policy_id.clone(),
-            config.give_token.asset_name.clone(),
-            asset_amount(&strategy.utxo, &config.give_token),
+            config.position_token.policy_id.clone(),
+            config.position_token.asset_name.clone(),
+            asset_amount(&strategy.utxo, &config.position_token),
         ),
         min_received: (
-            config.receive_token.policy_id.clone(),
-            config.receive_token.asset_name.clone(),
+            config.exit_token.policy_id.clone(),
+            config.exit_token.asset_name.clone(),
             1,
         ),
     };
 
     sundae_strategies::submit_execution(&config.network, &strategy.output, validity_range, swap)?;
+    info!("exit order submitted");
     Ok(Ack)
 }
 

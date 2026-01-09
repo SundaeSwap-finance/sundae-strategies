@@ -70,7 +70,9 @@ fn on_new_pool_state(
     // Filter to strategies with positions in this pool
     let active: Vec<_> = strategies
         .iter()
-        .filter(|s| pool_state.is_correct_pool(&s.order, &config.position_token, &config.exit_token))
+        .filter(|s| {
+            pool_state.is_correct_pool(&s.order, &config.position_token, &config.exit_token)
+        })
         .filter(|s| asset_amount(&s.utxo, &config.position_token) > 0)
         .collect();
 

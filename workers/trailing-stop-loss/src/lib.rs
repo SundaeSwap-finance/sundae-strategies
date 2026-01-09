@@ -57,10 +57,11 @@ fn trigger_price_key(pool_ident: &str) -> String {
     format!("{TRIGGER_PRICE_PREFIX}{pool_ident}")
 }
 
+#[allow(clippy::ptr_arg)] // Signature must match NewPoolStateCallback type
 fn on_new_pool_state(
     config: &Config<StrategyConfig>,
     pool_state: &PoolState,
-    strategies: &[ManagedStrategy],
+    strategies: &Vec<ManagedStrategy>,
 ) -> WorkerResult<Ack> {
     let pool_price = pool_state.pool_datum.raw_price(&pool_state.utxo);
     let pool_ident = hex::encode(&pool_state.pool_datum.identifier);

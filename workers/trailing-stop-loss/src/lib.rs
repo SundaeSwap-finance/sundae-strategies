@@ -19,18 +19,25 @@
 //!
 //! With `trail_percent = 0.15` (15%):
 //!
-//! 1. Position entered at price 100 → trigger price = 85
+//! 1. Worker first observes pool price at 100 → initial trigger price = 85
 //! 2. Price rises to 120 → trigger price trails up to 102
 //! 3. Price rises to 150 → trigger price trails up to 127.5
 //! 4. Price drops to 125 → below trigger price 127.5? Stop loss triggered! Exit position.
 //!
 //! The strategy captured gains from 100→125 instead of riding it back down.
 //!
+//! > **Note:** The initial trigger price is set from the pool price at the worker's
+//! > first observation of the position, which may differ from the actual user entry
+//! > price if there is a delay or rapid price movement between entry and observation.
+//!
 //! ## Configuration
 //!
 //! - `position_token`: The token being protected (what you're holding)
 //! - `exit_token`: The token to swap into when TSL triggers
-//! - `trail_percent`: How far below the peak the stop triggers (0.15 = 15%)
+//! - `trail_percent`: How far below the peak the stop triggers (0.15 = 15%). The
+//!   initial trigger is computed from the first observed pool price, not the exact
+//!   entry price, so fast price moves between entry and observation can result in
+//!   earlier-than-expected exits or weaker protection than anticipated.
 
 mod config;
 

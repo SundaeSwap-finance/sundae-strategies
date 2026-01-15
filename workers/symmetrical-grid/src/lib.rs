@@ -80,7 +80,7 @@ use balius_sdk::{Ack, Config, WorkerResult};
 use config::Config as StrategyConfig;
 use sundae_strategies::{
     ManagedStrategy, PoolState, Strategy, kv,
-    types::{Interval, Order, StrategyAuthorization, asset_amount},
+    types::{Interval, Order, asset_amount},
 };
 use tracing::info;
 
@@ -88,8 +88,8 @@ use tracing::info;
 struct GridState {
     center_price: f64,
     line_offset: i64,
-    init_strat: u64,
-    init_base: u64,
+    initial_strategy_amount: u64,
+    initial_base_amount: u64,
 }
 
 impl GridState {
@@ -97,14 +97,29 @@ impl GridState {
         Self {
             center_price: pool_price,
             line_offset: 0,
-            init_strat: asset_amount(&strategy.utxo, &config.strategy_token),
-            init_base: asset_amount(&strategy.utxo, &config.base_token),
+            initial_strategy_amount: asset_amount(&strategy.utxo, &config.strategy_token),
+            initial_base_amount: asset_amount(&strategy.utxo, &config.base_token),
         }
     }
 }
 
-fn grid_state_key(auth: &StrategyAuthorization) -> String {
-    format!("grid_state:{auth}")
+// GridState is keyed by a blake3 hash of the full strategy config.
+//
+// Design requirements:
+// - The strategy config must be treated as immutable. Changing the config
+//   creates a new key and discards all existing state (including `line_offset`),
+//   which may lead to unexpected losses.
+// - The frontend must prevent deploying multiple strategies with identical
+//   configs, as they would share the same GridState.
+//
+// The center price is included to reduce collisions. Additional fields
+// (e.g. `initial_strategy_amount`) can be added if stronger uniqueness
+// guarantees are required.
+fn grid_state_key(config: &StrategyConfig) -> Result<String, serde_json::Error> {
+    let bytes = serde_json::to_vec(config)?;
+    let hash = blake3::hash(&bytes);
+    let key = hex::encode(hash.as_bytes());
+    Ok(format!("grid_state:{key}"))
 }
 
 fn compute_grid_prices(center_price: f64, spacing_percent: f64, levels_per_side: u64) -> Vec<f64> {
@@ -157,14 +172,6 @@ fn on_new_pool_state(
     for s in strategies {
         // Filter for active strategies
         if pool_state.is_correct_pool(&s.order, &config.strategy_token, &config.base_token) {
-            let auth = match &s.order.details {
-                Order::Strategy { auth } => auth,
-                Order::Swap {
-                    offer: _,
-                    min_received: _,
-                } => continue,
-            };
-
             // Get current UTxO balance for `strategy_token` and `base_token`
             let strategy_amt = asset_amount(&s.utxo, &config.strategy_token);
             let base_amt = asset_amount(&s.utxo, &config.base_token);
@@ -173,7 +180,7 @@ fn on_new_pool_state(
             }
 
             // Get center price and current line offset
-            let key = grid_state_key(auth);
+            let key = grid_state_key(config)?;
             let mut grid_state = kv::get::<GridState>(&key)?
                 .unwrap_or_else(|| GridState::new(s, pool_price, config));
 
@@ -193,7 +200,7 @@ fn on_new_pool_state(
                 let validity_range = pool_state.get_validity_range(&config.network, 20);
                 if new_offset > grid_state.line_offset {
                     // Compute `strategy_token` to sell per grid line
-                    let sell_per_grid = grid_state.init_strat / config.levels_per_side;
+                    let sell_per_grid = grid_state.initial_strategy_amount / config.levels_per_side;
                     if sell_per_grid == 0 {
                         continue;
                     }
@@ -223,7 +230,7 @@ fn on_new_pool_state(
                     kv::set(&key, &grid_state)?;
                 } else {
                     // Compute `base_token` to sell per grid line
-                    let sell_per_grid = grid_state.init_base / config.levels_per_side;
+                    let sell_per_grid = grid_state.initial_base_amount / config.levels_per_side;
                     if sell_per_grid == 0 {
                         continue;
                     }

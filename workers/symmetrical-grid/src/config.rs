@@ -1,10 +1,12 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sundae_strategies::{Network, types::AssetId};
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(try_from = "ConfigRaw")]
 pub struct Config {
     pub network: Network,
+    /// Current price
+    pub center_price: f64,
     /// The token to buy or sell when a grid line is crossed
     pub strategy_token: AssetId,
     /// The token to trade against the strategy token
@@ -19,6 +21,7 @@ pub struct Config {
 #[derive(Deserialize)]
 struct ConfigRaw {
     network: Network,
+    center_price: f64,
     strategy_token: AssetId,
     base_token: AssetId,
     spacing_percent: f64,
@@ -51,6 +54,7 @@ impl TryFrom<ConfigRaw> for Config {
 
         Ok(Config {
             network: raw.network,
+            center_price: raw.center_price,
             strategy_token: raw.strategy_token,
             base_token: raw.base_token,
             spacing_percent: raw.spacing_percent,

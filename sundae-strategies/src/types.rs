@@ -5,7 +5,7 @@ use plutus_parser::AsPlutus;
 use serde::{Deserialize, Serialize, de};
 use utxorpc_spec::utxorpc::v1alpha::cardano::TxOutput;
 
-#[derive(PartialEq)]
+#[derive(Serialize, PartialEq)]
 pub struct AssetId {
     pub policy_id: Vec<u8>,
     pub asset_name: Vec<u8>,
@@ -203,16 +203,6 @@ pub type SingletonValue = (Vec<u8>, Vec<u8>, u64);
 #[derive(AsPlutus, Clone, Serialize, Deserialize, Debug)]
 pub enum StrategyAuthorization {
     Signature { signer: Vec<u8> },
-}
-
-impl fmt::Display for StrategyAuthorization {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            StrategyAuthorization::Signature { signer } => {
-                write!(f, "{}", hex::encode(signer))
-            }
-        }
-    }
 }
 
 #[derive(AsPlutus, Clone, Serialize, Deserialize, Debug)]

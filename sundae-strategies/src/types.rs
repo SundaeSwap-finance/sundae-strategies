@@ -205,6 +205,16 @@ pub enum StrategyAuthorization {
     Signature { signer: Vec<u8> },
 }
 
+impl fmt::Display for StrategyAuthorization {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            StrategyAuthorization::Signature { signer } => {
+                write!(f, "{}", hex::encode(signer))
+            }
+        }
+    }
+}
+
 #[derive(AsPlutus, Clone, Serialize, Deserialize, Debug)]
 pub struct TransactionId(pub Vec<u8>);
 

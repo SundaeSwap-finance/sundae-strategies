@@ -3584,6 +3584,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "symmetrical-grid"
+version = "0.1.0"
+dependencies = [
+ "balius-sdk",
+ "hex",
+ "plutus-parser 0.1.0 (git+https://github.com/SundaeSwap-finance/plutus-parser?rev=8a77d17)",
+ "serde",
+ "serde_json",
+ "sundae-strategies",
+ "tracing",
+ "url",
+ "utxorpc-spec 0.16.0",
+]
+
+[[package]]
 name = "syn"
 version = "2.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"

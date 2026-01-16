@@ -43,7 +43,7 @@ mod config;
 use std::time::Duration;
 
 use balius_sdk::{
-    Ack, Config, Json, Params, Worker, WorkerResult,
+    Ack, Config, Json, Params, WorkerResult,
     _internal::Handler,
     wit,
 };
@@ -213,10 +213,16 @@ impl Handler for GetPeakPriceHandler {
     ) -> Result<wit::Response, wit::HandleError> {
         let params: Params<GetPeakPriceParams> = event
             .try_into()
-            .map_err(|_| wit::HandleError::InvalidRequest)?;
+            .map_err(|_| wit::HandleError {
+                message: "invalid request parameters".to_string(),
+                code: 400,
+            })?;
 
         let tx_hash_bytes = hex::decode(&params.tx_hash)
-            .map_err(|_| wit::HandleError::InvalidRequest)?;
+            .map_err(|_| wit::HandleError {
+                message: "invalid tx_hash hex encoding".to_string(),
+                code: 400,
+            })?;
 
         let output_ref = OutputReference {
             transaction_id: TransactionId(tx_hash_bytes),
@@ -225,7 +231,10 @@ impl Handler for GetPeakPriceHandler {
 
         let key = peak_price_key(&output_ref);
         let peak_price = kv::get::<f64>(&key)
-            .map_err(|e| wit::HandleError::Internal(e.to_string()))?;
+            .map_err(|e| wit::HandleError {
+                message: e.to_string(),
+                code: 500,
+            })?;
 
         info!(
             "get-peak-price for {}#{}: {:?}",
@@ -236,7 +245,10 @@ impl Handler for GetPeakPriceHandler {
         let json = Json(response);
 
         json.try_into()
-            .map_err(|e: balius_sdk::Error| wit::HandleError::Internal(e.to_string()))
+            .map_err(|e: balius_sdk::Error| wit::HandleError {
+                message: e.to_string(),
+                code: 500,
+            })
     }
 }
 

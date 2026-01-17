@@ -49,10 +49,10 @@ impl TryFrom<ConfigRaw> for Config {
         }
 
         // Validate entry_price if provided
-        if let Some(price) = raw.entry_price {
-            if price <= 0.0 {
-                return Err(format!("entry_price must be > 0.0, got {}", price));
-            }
+        if let Some(price) = raw.entry_price
+            && price <= 0.0
+        {
+            return Err(format!("entry_price must be > 0.0, got {}", price));
         }
 
         Ok(Config {

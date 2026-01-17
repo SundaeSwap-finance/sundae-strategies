@@ -42,11 +42,7 @@ mod config;
 
 use std::time::Duration;
 
-use balius_sdk::{
-    Ack, Config, Json, Params, WorkerResult,
-    _internal::Handler,
-    wit,
-};
+use balius_sdk::{_internal::Handler, Ack, Config, Json, Params, WorkerResult, wit};
 use config::Config as StrategyConfig;
 use serde::{Deserialize, Serialize};
 use sundae_strategies::{
@@ -211,18 +207,16 @@ impl Handler for GetPeakPriceHandler {
         _config: wit::Config,
         event: wit::Event,
     ) -> Result<wit::Response, wit::HandleError> {
-        let params: Params<GetPeakPriceParams> = event
-            .try_into()
-            .map_err(|_| wit::HandleError {
+        let params: Params<GetPeakPriceParams> =
+            event.try_into().map_err(|_| wit::HandleError {
                 message: "invalid request parameters".to_string(),
                 code: 400,
             })?;
 
-        let tx_hash_bytes = hex::decode(&params.tx_hash)
-            .map_err(|_| wit::HandleError {
-                message: "invalid tx_hash hex encoding".to_string(),
-                code: 400,
-            })?;
+        let tx_hash_bytes = hex::decode(&params.tx_hash).map_err(|_| wit::HandleError {
+            message: "invalid tx_hash hex encoding".to_string(),
+            code: 400,
+        })?;
 
         let output_ref = OutputReference {
             transaction_id: TransactionId(tx_hash_bytes),
@@ -230,11 +224,10 @@ impl Handler for GetPeakPriceHandler {
         };
 
         let key = peak_price_key(&output_ref);
-        let peak_price = kv::get::<f64>(&key)
-            .map_err(|e| wit::HandleError {
-                message: e.to_string(),
-                code: 500,
-            })?;
+        let peak_price = kv::get::<f64>(&key).map_err(|e| wit::HandleError {
+            message: e.to_string(),
+            code: 500,
+        })?;
 
         info!(
             "get-peak-price for {}#{}: {:?}",

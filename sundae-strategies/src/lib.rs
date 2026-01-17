@@ -188,11 +188,30 @@ where
 
     /// Finish building this strategy handler and construct a Balius worker.
     pub fn worker(self) -> Worker {
-        Worker::new()
+        self.worker_with(|w| w)
+    }
+
+    /// Finish building this strategy handler with additional customization.
+    ///
+    /// The provided function receives the partially-built Worker and can add
+    /// custom request handlers before the Worker is finalized.
+    ///
+    /// # Example
+    /// ```ignore
+    /// Strategy::<MyConfig>::new()
+    ///     .on_new_pool_state(handler)
+    ///     .worker_with(|w| w.with_request_handler("my-handler", MyHandler))
+    /// ```
+    pub fn worker_with<F>(self, customize: F) -> Worker
+    where
+        F: FnOnce(Worker) -> Worker,
+    {
+        let worker = Worker::new()
             .with_request_handler("get-signer-key", self.clone())
             .with_utxo_handler(UtxoMatcher::all(), self.clone())
             .with_tx_handler(UtxoMatcher::all(), self.clone())
-            .with_signer(STRATEGY_KEY, "ed25519")
+            .with_signer(STRATEGY_KEY, "ed25519");
+        customize(worker)
     }
 }
 

@@ -12,6 +12,12 @@ pub struct Config {
     /// How far below the peak price the stop triggers (e.g., 0.15 = 15%)
     /// Must be in range (0.0, 1.0) - e.g., 0.15 means trigger at 15% below peak
     pub trail_percent: f64,
+    /// Optional initial peak price for the strategy.
+    /// If provided, this value is used as the initial peak price instead of
+    /// discovering it from the current pool price. This is useful when modifying
+    /// an existing position (cancel + recreate) to preserve the previous peak.
+    /// Not displayed on frontend - populated automatically during position modify.
+    pub entry_price: Option<f64>,
 }
 
 /// Raw config for deserialization before validation
@@ -21,6 +27,7 @@ struct ConfigRaw {
     position_token: AssetId,
     exit_token: AssetId,
     trail_percent: f64,
+    entry_price: Option<f64>,
 }
 
 impl TryFrom<ConfigRaw> for Config {
@@ -41,11 +48,19 @@ impl TryFrom<ConfigRaw> for Config {
             ));
         }
 
+        // Validate entry_price if provided
+        if let Some(price) = raw.entry_price
+            && price <= 0.0
+        {
+            return Err(format!("entry_price must be > 0.0, got {}", price));
+        }
+
         Ok(Config {
             network: raw.network,
             position_token: raw.position_token,
             exit_token: raw.exit_token,
             trail_percent: raw.trail_percent,
+            entry_price: raw.entry_price,
         })
     }
 }

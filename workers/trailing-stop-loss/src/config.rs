@@ -84,9 +84,7 @@ impl TryFrom<ConfigRaw> for Config {
 
         // Validate position_token and exit_token are different
         if raw.position_token == raw.exit_token {
-            return Err(
-                "position_token and exit_token must be different tokens".to_string()
-            );
+            return Err("position_token and exit_token must be different tokens".to_string());
         }
 
         Ok(Config {

@@ -112,24 +112,24 @@ fn pending_exit_key(output: &OutputReference) -> String {
 /// - User protecting ADA, exiting to SUNDAE:
 ///   position=ADA(asset_a), exit=SUNDAE(asset_b)
 ///   We want "SUNDAE per ADA" = 0.1 → use 1/raw_price ✓
-fn get_position_price(
-    pool_state: &PoolState,
-    position_token: &AssetId,
-) -> f64 {
+fn get_position_price(pool_state: &PoolState, position_token: &AssetId) -> f64 {
     let raw_price = pool_state.pool_datum.raw_price(&pool_state.utxo);
 
     // raw_price = reserves_a / reserves_b = "how much asset_a per 1 asset_b"
     // We want: "how much exit_token per 1 position_token"
     let (pool_asset_a, _pool_asset_b) = &pool_state.pool_datum.assets;
     let position_is_asset_a =
-        position_token.policy_id == pool_asset_a.0 &&
-        position_token.asset_name == pool_asset_a.1;
+        position_token.policy_id == pool_asset_a.0 && position_token.asset_name == pool_asset_a.1;
 
     if position_is_asset_a {
         // position is asset_a, exit is asset_b
         // raw_price = asset_a/asset_b = position/exit (INVERTED from what we want)
         // We want exit/position, so invert
-        if raw_price == 0.0 { 0.0 } else { 1.0 / raw_price }
+        if raw_price == 0.0 {
+            0.0
+        } else {
+            1.0 / raw_price
+        }
     } else {
         // position is asset_b, exit is asset_a
         // raw_price = asset_a/asset_b = exit/position (exactly what we want!)

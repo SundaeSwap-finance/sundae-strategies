@@ -60,22 +60,11 @@ use tracing::info;
 
 /// Key prefix for storing peak prices per strategy
 pub const PEAK_PRICE_PREFIX: &str = "peak_price:";
-/// Key prefix for tracking strategies with pending exit orders
-pub const PENDING_EXIT_PREFIX: &str = "pending_exit:";
 
 fn peak_price_key(output: &OutputReference) -> String {
     format!(
         "{}{}#{}",
         PEAK_PRICE_PREFIX,
-        hex::encode(&output.transaction_id.0),
-        output.output_index
-    )
-}
-
-fn pending_exit_key(output: &OutputReference) -> String {
-    format!(
-        "{}{}#{}",
-        PENDING_EXIT_PREFIX,
         hex::encode(&output.transaction_id.0),
         output.output_index
     )
@@ -162,17 +151,6 @@ fn on_new_pool_state(
 
     // Process each strategy individually (per-strategy peak prices)
     for strategy in active {
-        // Skip if we've already submitted an exit order for this strategy
-        let pending_key = pending_exit_key(&strategy.output);
-        if kv::get::<bool>(&pending_key)?.unwrap_or(false) {
-            info!(
-                "skipping {}#{}: exit already pending",
-                hex::encode(&strategy.output.transaction_id.0),
-                strategy.output.output_index
-            );
-            continue;
-        }
-
         let peak_key = peak_price_key(&strategy.output);
         let stored_peak: Option<f64> = kv::get::<f64>(&peak_key)?;
 
@@ -227,9 +205,6 @@ fn on_new_pool_state(
                 trigger_price
             );
             trigger_exit(config, now, strategy, trigger_price)?;
-
-            // Mark this strategy as having a pending exit to prevent duplicate submissions
-            kv::set(&pending_key, &true)?;
         }
     }
 

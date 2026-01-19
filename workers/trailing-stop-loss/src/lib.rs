@@ -35,8 +35,15 @@
 //! - `position_token`: The token being protected (what you're holding)
 //! - `exit_token`: The token to swap into when TSL triggers
 //! - `trail_percent`: How far below the peak the stop triggers (0.15 = 15%)
+//! - `slippage_tolerance`: Maximum acceptable slippage on exit (0.03 = 3%)
 //! - `entry_price`: Optional initial peak price. If set, used instead of discovering
 //!   from pool price. Useful when modifying positions to preserve the previous peak.
+//!
+//! ## Price Calculation
+//!
+//! Price is always calculated as: "how much exit_token per 1 position_token"
+//! This means when your position_token loses value (you get less exit_token for it),
+//! the price goes DOWN, which is when TSL should trigger.
 
 mod config;
 
@@ -47,11 +54,14 @@ use config::Config as StrategyConfig;
 use serde::{Deserialize, Serialize};
 use sundae_strategies::{
     ManagedStrategy, PoolState, Strategy, kv,
-    types::{Interval, Order, OutputReference, TransactionId, asset_amount},
+    types::{AssetId, Interval, Order, OutputReference, TransactionId, asset_amount},
 };
 use tracing::info;
 
+/// Key prefix for storing peak prices per strategy
 pub const PEAK_PRICE_PREFIX: &str = "peak_price:";
+/// Key prefix for tracking strategies with pending exit orders
+pub const PENDING_EXIT_PREFIX: &str = "pending_exit:";
 
 fn peak_price_key(output: &OutputReference) -> String {
     format!(
@@ -62,13 +72,79 @@ fn peak_price_key(output: &OutputReference) -> String {
     )
 }
 
+fn pending_exit_key(output: &OutputReference) -> String {
+    format!(
+        "{}{}#{}",
+        PENDING_EXIT_PREFIX,
+        hex::encode(&output.transaction_id.0),
+        output.output_index
+    )
+}
+
+// ============================================================================
+// Price Calculation
+// ============================================================================
+
+/// Calculate the price of position_token in terms of exit_token.
+///
+/// This is the critical function that determines the "price" we track for TSL.
+/// We always want: "how much exit_token do I get for 1 position_token?"
+///
+/// ## Why This Matters
+///
+/// Pool stores assets as (asset_a, asset_b) with reserves. The raw_price from
+/// PoolDatum gives us `reserves_a / reserves_b` which is "asset_a per asset_b".
+///
+/// But we need "exit_token per position_token":
+/// - If position_token is asset_b: raw_price already gives us exit_per_position ✓
+/// - If position_token is asset_a: raw_price gives us position_per_exit (inverted!)
+///   so we must return 1/raw_price
+///
+/// ## Example
+///
+/// Pool: [ADA, SUNDAE] with 10,000 ADA and 1,000 SUNDAE
+/// raw_price = 10,000/1,000 = 10 (meaning "10 ADA per SUNDAE")
+///
+/// - User protecting SUNDAE, exiting to ADA:
+///   position=SUNDAE(asset_b), exit=ADA(asset_a)
+///   We want "ADA per SUNDAE" = 10 → use raw_price directly ✓
+///
+/// - User protecting ADA, exiting to SUNDAE:
+///   position=ADA(asset_a), exit=SUNDAE(asset_b)
+///   We want "SUNDAE per ADA" = 0.1 → use 1/raw_price ✓
+fn get_position_price(
+    pool_state: &PoolState,
+    position_token: &AssetId,
+) -> f64 {
+    let raw_price = pool_state.pool_datum.raw_price(&pool_state.utxo);
+
+    // raw_price = reserves_a / reserves_b = "how much asset_a per 1 asset_b"
+    // We want: "how much exit_token per 1 position_token"
+    let (pool_asset_a, _pool_asset_b) = &pool_state.pool_datum.assets;
+    let position_is_asset_a =
+        position_token.policy_id == pool_asset_a.0 &&
+        position_token.asset_name == pool_asset_a.1;
+
+    if position_is_asset_a {
+        // position is asset_a, exit is asset_b
+        // raw_price = asset_a/asset_b = position/exit (INVERTED from what we want)
+        // We want exit/position, so invert
+        if raw_price == 0.0 { 0.0 } else { 1.0 / raw_price }
+    } else {
+        // position is asset_b, exit is asset_a
+        // raw_price = asset_a/asset_b = exit/position (exactly what we want!)
+        raw_price
+    }
+}
+
 #[allow(clippy::ptr_arg)] // Signature must match NewPoolStateCallback type
 fn on_new_pool_state(
     config: &Config<StrategyConfig>,
     pool_state: &PoolState,
     strategies: &Vec<ManagedStrategy>,
 ) -> WorkerResult<Ack> {
-    let pool_price = pool_state.pool_datum.raw_price(&pool_state.utxo);
+    // Calculate price correctly based on token ordering in pool
+    let pool_price = get_position_price(pool_state, &config.position_token);
     let now = config.network.to_unix_time(pool_state.slot);
 
     // Filter to strategies with positions in this pool
@@ -86,8 +162,19 @@ fn on_new_pool_state(
 
     // Process each strategy individually (per-strategy peak prices)
     for strategy in active {
-        let key = peak_price_key(&strategy.output);
-        let stored_peak: Option<f64> = kv::get::<f64>(&key)?;
+        // Skip if we've already submitted an exit order for this strategy
+        let pending_key = pending_exit_key(&strategy.output);
+        if kv::get::<bool>(&pending_key)?.unwrap_or(false) {
+            info!(
+                "skipping {}#{}: exit already pending",
+                hex::encode(&strategy.output.transaction_id.0),
+                strategy.output.output_index
+            );
+            continue;
+        }
+
+        let peak_key = peak_price_key(&strategy.output);
+        let stored_peak: Option<f64> = kv::get::<f64>(&peak_key)?;
 
         // Compute peak price from stored value or initialize from entry_price/pool_price
         let peak_price = match stored_peak {
@@ -101,7 +188,7 @@ fn on_new_pool_state(
                     initial_peak,
                     config.entry_price
                 );
-                kv::set(&key, &initial_peak)?;
+                kv::set(&peak_key, &initial_peak)?;
                 initial_peak
             }
             Some(peak) if pool_price > peak => {
@@ -112,7 +199,7 @@ fn on_new_pool_state(
                     strategy.output.output_index,
                     pool_price
                 );
-                kv::set(&key, &pool_price)?;
+                kv::set(&peak_key, &pool_price)?;
                 pool_price
             }
             Some(peak) => peak,
@@ -122,7 +209,7 @@ fn on_new_pool_state(
         let trigger_price = peak_price * (1.0 - config.trail_percent);
 
         info!(
-            "strategy {}#{}: price={}, peak={}, trigger={}",
+            "strategy {}#{}: price={:.8}, peak={:.8}, trigger={:.8}",
             hex::encode(&strategy.output.transaction_id.0),
             strategy.output.output_index,
             pool_price,
@@ -133,13 +220,16 @@ fn on_new_pool_state(
         // Check if TSL should trigger for this strategy
         if pool_price < trigger_price {
             info!(
-                "TSL triggered for {}#{}: price {} < trigger {}",
+                "TSL triggered for {}#{}: price {:.8} < trigger {:.8}",
                 hex::encode(&strategy.output.transaction_id.0),
                 strategy.output.output_index,
                 pool_price,
                 trigger_price
             );
-            trigger_exit(config, now, strategy)?;
+            trigger_exit(config, now, strategy, trigger_price)?;
+
+            // Mark this strategy as having a pending exit to prevent duplicate submissions
+            kv::set(&pending_key, &true)?;
         }
     }
 
@@ -147,10 +237,25 @@ fn on_new_pool_state(
 }
 
 /// Exit: Swap position_token back to exit_token when TSL triggers
+///
+/// ## Slippage Protection
+///
+/// We calculate a minimum received amount based on:
+/// - The amount of position_token being sold
+/// - The trigger_price (exit_token per position_token)
+/// - The configured slippage_tolerance
+///
+/// This ensures the user doesn't get an unexpectedly bad fill if the price
+/// drops further between trigger and execution.
+///
+/// Example: Selling 1000 SUNDAE at trigger_price=8 ADA/SUNDAE with 3% slippage:
+/// - Expected: 1000 * 8 = 8000 ADA
+/// - Minimum:  8000 * (1 - 0.03) = 7760 ADA
 fn trigger_exit(
     config: &Config<StrategyConfig>,
     now: u64,
     strategy: &ManagedStrategy,
+    trigger_price: f64,
 ) -> WorkerResult<Ack> {
     let valid_for = Duration::from_secs(20 * 60);
     // Validity range extends into the past to handle clock skew and tx propagation delays
@@ -159,21 +264,43 @@ fn trigger_exit(
         now.saturating_add(valid_for.as_millis() as u64),
     );
 
+    let position_amount = asset_amount(&strategy.utxo, &config.position_token);
+
+    // Calculate minimum received with slippage protection
+    // trigger_price = exit_token per position_token
+    // expected_output = position_amount * trigger_price
+    // min_output = expected_output * (1 - slippage_tolerance)
+    let expected_output = position_amount as f64 * trigger_price;
+    let min_received = (expected_output * (1.0 - config.slippage_tolerance)) as u64;
+
+    // Ensure we receive at least 1 unit (sanity check)
+    let min_received = min_received.max(1);
+
+    info!(
+        "exit order: selling {} {} for min {} {} (trigger_price={:.8}, slippage={}%)",
+        position_amount,
+        config.position_token.name_to_string(),
+        min_received,
+        config.exit_token.name_to_string(),
+        trigger_price,
+        config.slippage_tolerance * 100.0
+    );
+
     let swap = Order::Swap {
         offer: (
             config.position_token.policy_id.clone(),
             config.position_token.asset_name.clone(),
-            asset_amount(&strategy.utxo, &config.position_token),
+            position_amount,
         ),
         min_received: (
             config.exit_token.policy_id.clone(),
             config.exit_token.asset_name.clone(),
-            1,
+            min_received,
         ),
     };
 
     sundae_strategies::submit_execution(&config.network, &strategy.output, validity_range, swap)?;
-    info!("exit order submitted");
+    info!("exit order submitted successfully");
     Ok(Ack)
 }
 

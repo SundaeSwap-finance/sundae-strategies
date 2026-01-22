@@ -132,10 +132,6 @@ fn on_new_pool_state(
     pool_state: &PoolState,
     strategies: &Vec<ManagedStrategy>,
 ) -> WorkerResult<Ack> {
-    // Calculate price correctly based on token ordering in pool
-    let pool_price = get_position_price(pool_state, &config.position_token);
-    let now = config.network.to_unix_time(pool_state.slot);
-
     // Filter to strategies with positions in this pool
     let active: Vec<_> = strategies
         .iter()
@@ -148,6 +144,11 @@ fn on_new_pool_state(
     if active.is_empty() {
         return Ok(Ack);
     }
+
+    // Calculate price correctly based on token ordering in pool
+    let pool_price = get_position_price(pool_state, &config.position_token);
+    let now = config.network.to_unix_time(pool_state.slot);
+    tracing::info!("New pool price: {pool_price}");
 
     // Process each strategy individually (per-strategy peak prices)
     for strategy in active {
@@ -350,8 +351,10 @@ impl Handler for GetPeakPriceHandler {
 #[balius_sdk::main]
 fn main() -> Worker {
     balius_sdk::logging::init();
+    info!("Trailing stop loss worker starting!");
 
     Strategy::<StrategyConfig>::new()
+        .on_each_tx(|_, _, _| Ok(Ack))
         .on_new_pool_state(on_new_pool_state)
         .worker_with(|w| w.with_request_handler("get-peak-price", GetPeakPriceHandler))
 }

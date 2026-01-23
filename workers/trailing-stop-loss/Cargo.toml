@@ -7,9 +7,7 @@ edition = "2024"
 balius-sdk = { workspace = true }
 sundae-strategies = { path = "../../sundae-strategies" }
 hex = "0.4"
-plutus-parser = { git = "https://github.com/SundaeSwap-finance/plutus-parser", rev = "8a77d17", features = [
-    "derive",
-] }
+plutus-parser = { version = "0.1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2.5"

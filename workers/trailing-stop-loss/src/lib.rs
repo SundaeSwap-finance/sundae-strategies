@@ -132,6 +132,11 @@ fn on_new_pool_state(
     pool_state: &PoolState,
     strategies: &Vec<ManagedStrategy>,
 ) -> WorkerResult<Ack> {
+    // Calculate price correctly based on token ordering in pool
+    let pool_price = get_position_price(pool_state, &config.position_token);
+    let now = config.network.to_unix_time(pool_state.slot);
+    tracing::info!("New pool price: {pool_price}");
+
     // Filter to strategies with positions in this pool
     let active: Vec<_> = strategies
         .iter()
@@ -142,18 +147,20 @@ fn on_new_pool_state(
         .collect();
 
     if active.is_empty() {
+        tracing::info!("No active strategies");
         return Ok(Ack);
     }
-
-    // Calculate price correctly based on token ordering in pool
-    let pool_price = get_position_price(pool_state, &config.position_token);
-    let now = config.network.to_unix_time(pool_state.slot);
-    tracing::info!("New pool price: {pool_price}");
 
     // Process each strategy individually (per-strategy peak prices)
     for strategy in active {
         let peak_key = peak_price_key(&strategy.output);
-        let stored_peak: Option<f64> = kv::get::<f64>(&peak_key)?;
+        let stored_peak = match kv::get::<f64>(&peak_key) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!("kv get failed: {e}");
+                None
+            }
+        };
 
         // Compute peak price from stored value or initialize from entry_price/pool_price
         let peak_price = match stored_peak {
@@ -167,7 +174,14 @@ fn on_new_pool_state(
                     initial_peak,
                     config.entry_price
                 );
-                kv::set(&peak_key, &initial_peak)?;
+                if let Err(e) = kv::set(&peak_key, &initial_peak) {
+                    tracing::error!(
+                        "failed to initialize peak price for {}#{}: {}",
+                        hex::encode(&strategy.output.transaction_id.0),
+                        strategy.output.output_index,
+                        e
+                    );
+                }
                 initial_peak
             }
             Some(peak) if pool_price > peak => {
@@ -178,7 +192,14 @@ fn on_new_pool_state(
                     strategy.output.output_index,
                     pool_price
                 );
-                kv::set(&peak_key, &pool_price)?;
+                if let Err(e) = kv::set(&peak_key, &pool_price) {
+                    tracing::error!(
+                        "failed to update peak price for {}#{}: {}",
+                        hex::encode(&strategy.output.transaction_id.0),
+                        strategy.output.output_index,
+                        e
+                    );
+                }
                 pool_price
             }
             Some(peak) => peak,
@@ -205,7 +226,14 @@ fn on_new_pool_state(
                 pool_price,
                 trigger_price
             );
-            trigger_exit(config, now, strategy, trigger_price)?;
+            if let Err(e) = trigger_exit(config, now, strategy, trigger_price) {
+                tracing::error!(
+                    "failed to trigger exit for {}#{}: {}",
+                    hex::encode(&strategy.output.transaction_id.0),
+                    strategy.output.output_index,
+                    e
+                );
+            }
         }
     }
 
@@ -275,7 +303,17 @@ fn trigger_exit(
         ),
     };
 
-    sundae_strategies::submit_execution(&config.network, &strategy.output, validity_range, swap)?;
+    if let Err(e) =
+        sundae_strategies::submit_execution(&config.network, &strategy.output, validity_range, swap)
+    {
+        tracing::error!(
+            "failed to submit exit execution for {}#{}: {}",
+            hex::encode(&strategy.output.transaction_id.0),
+            strategy.output.output_index,
+            e
+        );
+        return Ok(Ack);
+    }
     info!("exit order submitted successfully");
     Ok(Ack)
 }
@@ -351,10 +389,8 @@ impl Handler for GetPeakPriceHandler {
 #[balius_sdk::main]
 fn main() -> Worker {
     balius_sdk::logging::init();
-    info!("Trailing stop loss worker starting!");
 
     Strategy::<StrategyConfig>::new()
-        .on_each_tx(|_, _, _| Ok(Ack))
         .on_new_pool_state(on_new_pool_state)
         .worker_with(|w| w.with_request_handler("get-peak-price", GetPeakPriceHandler))
 }

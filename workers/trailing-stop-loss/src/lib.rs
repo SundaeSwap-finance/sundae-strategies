@@ -135,7 +135,10 @@ fn on_new_pool_state(
     // Calculate price correctly based on token ordering in pool
     let pool_price = get_position_price(pool_state, &config.position_token);
     let now = config.network.to_unix_time(pool_state.slot);
-    tracing::info!("New pool price: {pool_price}");
+    tracing::info!(
+        "New pool price for {}: {pool_price}",
+        hex::encode(pool_state.pool_datum.identifier.clone())
+    );
 
     // Filter to strategies with positions in this pool
     let active: Vec<_> = strategies

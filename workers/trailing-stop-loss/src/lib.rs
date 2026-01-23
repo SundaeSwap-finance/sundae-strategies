@@ -141,13 +141,49 @@ fn on_new_pool_state(
     );
 
     // Filter to strategies with positions in this pool
-    let active: Vec<_> = strategies
-        .iter()
-        .filter(|s| {
-            pool_state.is_correct_pool(&s.order, &config.position_token, &config.exit_token)
-        })
-        .filter(|s| asset_amount(&s.utxo, &config.position_token) > 0)
-        .collect();
+    let mut active = Vec::new();
+
+    if strategies.is_empty() {
+        tracing::info!("No strategy orders are queued");
+    }
+
+    for s in strategies {
+        let correct_pool =
+            pool_state.is_correct_pool(&s.order, &config.position_token, &config.exit_token);
+
+        let position_amt = asset_amount(&s.utxo, &config.position_token);
+
+        if !correct_pool {
+            if let Some(ident) = &s.order.pool_ident {
+                tracing::info!(
+                    "strategy skipped: wrong pool (Requires {}, actual {})",
+                    hex::encode(ident),
+                    hex::encode(pool_state.pool_datum.identifier.clone())
+                );
+            } else {
+                tracing::info!(
+                    "strategy skipped: wrong assets (Requires {}.{}/{}.{}, actual {}.{}/{}.{})",
+                    hex::encode(config.position_token.policy_id.clone()),
+                    hex::encode(config.position_token.asset_name.clone()),
+                    hex::encode(config.exit_token.policy_id.clone()),
+                    hex::encode(config.exit_token.asset_name.clone()),
+                    hex::encode(pool_state.pool_datum.assets.0.0.clone()),
+                    hex::encode(pool_state.pool_datum.assets.0.1.clone()),
+                    hex::encode(pool_state.pool_datum.assets.1.0.clone()),
+                    hex::encode(pool_state.pool_datum.assets.1.1.clone()),
+                )
+            }
+            continue;
+        }
+
+        if position_amt == 0 {
+            let exit_amt = asset_amount(&s.utxo, &config.position_token);
+            tracing::info!("strategy skipped: 0 position amount (exit_token amount: {exit_amt}");
+            continue;
+        }
+
+        active.push(s);
+    }
 
     if active.is_empty() {
         tracing::info!("No active strategies");

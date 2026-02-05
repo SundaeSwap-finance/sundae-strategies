@@ -177,8 +177,8 @@ fn on_new_pool_state(
         }
 
         if position_amt == 0 {
-            let exit_amt = asset_amount(&s.utxo, &config.position_token);
-            tracing::info!("strategy skipped: 0 position amount (exit_token amount: {exit_amt}");
+            let exit_amt = asset_amount(&s.utxo, &config.exit_token);                                                                                      
+            tracing::info!("strategy skipped: 0 position amount (exit_token amount: {exit_amt})");     
             continue;
         }
 
@@ -265,7 +265,7 @@ fn on_new_pool_state(
                 pool_price,
                 trigger_price
             );
-            if let Err(e) = trigger_exit(config, now, strategy, trigger_price) {
+            if let Err(e) = trigger_exit(config, now, strategy, trigger_price, pool_price) {
                 tracing::error!(
                     "failed to trigger exit for {}#{}: {}",
                     hex::encode(&strategy.output.transaction_id.0),
@@ -285,13 +285,18 @@ fn on_new_pool_state(
 ///
 /// We calculate a minimum received amount based on:
 /// - The amount of position_token being sold
-/// - The trigger_price (exit_token per position_token)
+/// - The pool_price (current exit_token per position_token)
 /// - The configured slippage_tolerance
 ///
 /// This ensures the user doesn't get an unexpectedly bad fill if the price
 /// drops further between trigger and execution.
 ///
-/// Example: Selling 1000 SUNDAE at trigger_price=8 ADA/SUNDAE with 3% slippage:
+/// Note: We use pool_price (current market price) rather than trigger_price
+/// (which is already reduced by trail_percent) to calculate expected output,
+/// as the trigger_price is only used to determine WHEN to exit, not HOW MUCH
+/// we expect to receive.
+///
+/// Example: Selling 1000 SUNDAE at pool_price=8 ADA/SUNDAE with 3% slippage:
 /// - Expected: 1000 * 8 = 8000 ADA
 /// - Minimum:  8000 * (1 - 0.03) = 7760 ADA
 fn trigger_exit(
@@ -299,6 +304,7 @@ fn trigger_exit(
     now: u64,
     strategy: &ManagedStrategy,
     trigger_price: f64,
+    pool_price: f64,
 ) -> WorkerResult<Ack> {
     let valid_for = Duration::from_secs(20 * 60);
     // Validity range extends into the past to handle clock skew and tx propagation delays
@@ -310,21 +316,25 @@ fn trigger_exit(
     let position_amount = asset_amount(&strategy.utxo, &config.position_token);
 
     // Calculate minimum received with slippage protection
-    // trigger_price = exit_token per position_token
-    // expected_output = position_amount * trigger_price
+    // pool_price = current exit_token per position_token (market price)
+    // expected_output = position_amount * pool_price
     // min_output = expected_output * (1 - slippage_tolerance)
-    let expected_output = position_amount as f64 * trigger_price;
+    // Note: We use pool_price (current market price) instead of trigger_price
+    // because trigger_price is already reduced by trail_percent and is only
+    // used to determine WHEN to exit, not HOW MUCH we expect to receive.
+    let expected_output = position_amount as f64 * pool_price;
     let min_received = (expected_output * (1.0 - config.slippage_tolerance)) as u64;
 
     // Ensure we receive at least 1 unit (sanity check)
     let min_received = min_received.max(1);
 
     info!(
-        "exit order: selling {} {} for min {} {} (trigger_price={:.8}, slippage={}%)",
+        "exit order: selling {} {} for min {} {} (pool_price={:.8}, trigger_price={:.8}, slippage={}%)",
         position_amount,
         config.position_token.name_to_string(),
         min_received,
         config.exit_token.name_to_string(),
+        pool_price,
         trigger_price,
         config.slippage_tolerance * 100.0
     );

@@ -17,32 +17,7 @@ It largely relies on [Balius](https://github.com/txpipe/balius) from TxPipe as a
 
 ## Getting started
 
-Make sure you have [Cargo](https://www.rust-lang.org/tools/install) and [Bun](https://bun.com/docs/installation).
-
-You can create a new strategy of your own by using `cargo-generate`:
-
-```sh
-# If you don't have it installed already
-# cargo install cargo-generate
-cargo generate SundaeSwap-finance/sundae-strategy-template
-```
-
-This will set up a new directory with a pre-implemented trailing-stop loss strategy for you.
-
-From there, you can compile the worker with
-
-```sh
-# Install these if you haven't already
-# cargo install just
-# cargo install --git https://github.com/SundaeSwap-finance/sundae-strategies balius-worker-builder
-just build
-```
-
-and run it with
-
-```sh
-baliusd
-```
+For setup instructions, see [QUICKSTART.md](./QUICKSTART.md).
 
 When you're working on your strategies, you can use the Sundae SDK CLI to place a strategy order:
 

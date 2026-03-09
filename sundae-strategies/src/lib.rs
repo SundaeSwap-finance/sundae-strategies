@@ -22,7 +22,7 @@ use crate::{
 };
 
 /// Which network is this strategy running against?
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Network {
     Preview,

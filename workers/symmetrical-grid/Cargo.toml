@@ -1,0 +1,21 @@
+[package]
+name = "symmetrical-grid"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+balius-sdk = { workspace = true }
+sundae-strategies = { path = "../../sundae-strategies" }
+hex = "0.4"
+plutus-parser = { git = "https://github.com/SundaeSwap-finance/plutus-parser", rev = "8a77d17", features = [
+    "derive",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2.5"
+utxorpc-spec = "0.16"
+tracing = "0.1"
+blake3 = "1"
+
+[lib]
+crate-type = ["cdylib"]

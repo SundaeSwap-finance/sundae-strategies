@@ -1,0 +1,55 @@
+# Persist information for intersecting with the chain. If undefined, the daemon
+# will always intersect with the tip
+[store]
+path = "runtime/cursors"
+
+[rpc]
+listen_address = "0.0.0.0:3001"
+
+# Configuration for Prometheus server. If undefined, metrics will not be exposed.
+[metrics]
+listen_address = "0.0.0.0:8080"
+
+# Logging configuration for the daemon.
+[logging]
+max_level = "info"
+include_tokio = false
+
+[ledger]
+endpoint_url = "https://preview.utxorpc-v0.demeter.run"
+headers."dmtr-api-key" = "utxorpc1gk0xe296vd5q567uug5"
+
+[chainsync]
+endpoint_url = "https://preview.utxorpc-v0.demeter.run"
+headers."dmtr-api-key" = "utxorpc1gk0xe296vd5q567uug5"
+
+# Key value backend.
+[kv]
+type = "redb"
+path = "runtime/kv"
+
+[http]
+type = "reqwest"
+
+# Worker logs backend.
+[logger]
+type = "file"
+folder = "runtime/logs"
+
+# Backend for providing signing keys to workers.
+[signing]
+type = "memory"
+
+# You can hardcode the keys for the workers. If a key is undefined it will be
+# created randomly, not consistent across restarts.
+[[signing.keys]]
+worker = "symmetrical-grid"
+name = "default"
+algorithm = "ed25519"
+private_key = "06cc7c4372cd1036719cd79b8349de5ca6b54ccf5487578834d32064b4b1ec53"
+
+# List of workers to be loaded by the runtime.
+[[workers]]
+name = "symmetrical-grid"
+module = "../../balius-server/workers/trailing-stop-loss.wasm"
+config = "grid.json"

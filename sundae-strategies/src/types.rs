@@ -5,7 +5,7 @@ use plutus_parser::AsPlutus;
 use serde::{Deserialize, Serialize, de};
 use utxorpc_spec::utxorpc::v1alpha::cardano::TxOutput;
 
-#[derive(PartialEq)]
+#[derive(Serialize, PartialEq)]
 pub struct AssetId {
     pub policy_id: Vec<u8>,
     pub asset_name: Vec<u8>,

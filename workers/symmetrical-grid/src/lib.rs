@@ -147,15 +147,27 @@ fn compute_crossed_prices(
 ) -> (i64, Vec<f64>) {
     let new_offset = grid_prices.iter().take_while(|p| **p < price).count() as i64;
 
+    tracing::info!(
+        "compute_crossed_prices: price={}, previous_offset={}, new_offset={}",
+        price,
+        previous_offset,
+        new_offset
+    );
+
     let prices = if new_offset > previous_offset {
-        grid_prices[previous_offset as usize..new_offset as usize].to_vec()
+        let slice = grid_prices[previous_offset as usize..new_offset as usize].to_vec();
+        tracing::info!("crossing upward: {} grid lines {:?}", slice.len(), slice);
+        slice
     } else if new_offset < previous_offset {
-        grid_prices[new_offset as usize..previous_offset as usize]
+        let slice: Vec<f64> = grid_prices[new_offset as usize..previous_offset as usize]
             .iter()
             .rev()
             .copied()
-            .collect()
+            .collect();
+        tracing::info!("crossing downward: {} grid lines {:?}", slice.len(), slice);
+        slice
     } else {
+        tracing::info!("no grid lines crossed");
         Vec::new()
     };
 
@@ -186,9 +198,9 @@ fn on_new_pool_state(
 
             // Get center price and current line offset
             let key = grid_state_key(config)?;
-            tracing::info!("Strategy key: {key}");
             let mut grid_state = kv::get::<GridState>(&key)?
                 .unwrap_or_else(|| GridState::new(s, pool_price, config));
+            tracing::info!("Grid state: {:?}", grid_state);
 
             // Compute grid lines
             let grid_prices = compute_grid_prices(
@@ -197,11 +209,13 @@ fn on_new_pool_state(
                 config.levels_per_side,
             );
 
-            tracing::info!("Grid lines: {:?}", grid_prices);
+            tracing::info!("Computed grid lines: {:?}", grid_prices);
 
             // Check which grid lines (if any) were crossed
             let (new_offset, crossed_prices) =
                 compute_crossed_prices(&grid_prices, grid_state.line_offset, pool_price);
+
+            tracing::info!("Crossed grids: {:?}", crossed_prices);
 
             // Execute buy or sell depending on direction of the new offset
             if !crossed_prices.is_empty() {
@@ -213,16 +227,26 @@ fn on_new_pool_state(
                     if sell_per_grid == 0 {
                         continue;
                     }
+                    tracing::info!(
+                        "Selling {sell_per_grid} {} per crossed grid",
+                        config.strategy_token.name_to_string()
+                    );
 
                     // Compute max fillable grid lines based on current UTxO balance
                     let max_fillable = strategy_amt / sell_per_grid;
                     if max_fillable == 0 {
                         continue;
                     }
+                    tracing::info!("Number of fillable grids: {max_fillable}");
 
                     // Reduce crossed prices to only the prices that can be filled
                     let grids_to_fill = crossed_prices.len().min(max_fillable as usize);
                     let prices_to_fill = &crossed_prices[..grids_to_fill];
+
+                    tracing::info!(
+                        "{grids_to_fill} grids will be filled at the following prices: {:?}",
+                        prices_to_fill
+                    );
 
                     // Calculate buy and sell amounts
                     let sell_amt = sell_per_grid * grids_to_fill as u64;
@@ -232,7 +256,11 @@ fn on_new_pool_state(
                         .sum::<f64>()
                         .floor() as u64;
 
-                    tracing::info!("Selling {sell_amt}");
+                    tracing::info!(
+                        "Selling {sell_amt} {} for {buy_amt} {}",
+                        config.strategy_token.name_to_string(),
+                        config.base_token.name_to_string()
+                    );
                     trigger_sell_strategy(config, validity_range, s, sell_amt, buy_amt)?;
 
                     // Update offset
@@ -244,16 +272,26 @@ fn on_new_pool_state(
                     if sell_per_grid == 0 {
                         continue;
                     }
+                    tracing::info!(
+                        "Selling {sell_per_grid} {} per crossed grid",
+                        config.base_token.name_to_string()
+                    );
 
                     // Compute max fillable grid lines based on current UTxO balance
                     let max_fillable = base_amt / sell_per_grid;
                     if max_fillable == 0 {
                         continue;
                     }
+                    tracing::info!("Number of fillable grids: {max_fillable}");
 
                     // Reduce crossed prices to only the prices that can be filled
                     let grids_to_fill = crossed_prices.len().min(max_fillable as usize);
                     let prices_to_fill = &crossed_prices[..grids_to_fill];
+
+                    tracing::info!(
+                        "{grids_to_fill} grids will be filled at the following prices: {:?}",
+                        prices_to_fill
+                    );
 
                     // Calculate buy and sell amounts
                     let sell_amt = sell_per_grid * grids_to_fill as u64;
@@ -262,7 +300,11 @@ fn on_new_pool_state(
                         .map(|price| sell_per_grid as f64 / price)
                         .sum::<f64>()
                         .floor() as u64;
-                    tracing::info!("Selling {sell_amt}");
+                    tracing::info!(
+                        "Selling {sell_amt} {} for {buy_amt} {}",
+                        config.base_token.name_to_string(),
+                        config.strategy_token.name_to_string(),
+                    );
 
                     trigger_buy_strategy(config, validity_range, s, sell_amt, buy_amt)?;
 

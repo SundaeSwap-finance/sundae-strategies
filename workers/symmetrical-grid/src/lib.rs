@@ -169,18 +169,24 @@ fn on_new_pool_state(
 ) -> WorkerResult<Ack> {
     let pool_price = pool_state.pool_datum.raw_price(&pool_state.utxo);
 
+    tracing::info!("Found new pool price: {pool_price}");
+
     for s in strategies {
         // Filter for active strategies
         if pool_state.is_correct_pool(&s.order, &config.strategy_token, &config.base_token) {
+            tracing::info!("Strategy found with the correct pool");
             // Get current UTxO balance for `strategy_token` and `base_token`
             let strategy_amt = asset_amount(&s.utxo, &config.strategy_token);
+            tracing::info!("Strategy amount: {strategy_amt}");
             let base_amt = asset_amount(&s.utxo, &config.base_token);
+            tracing::info!("Base amount: {strategy_amt}");
             if strategy_amt == 0 && base_amt == 0 {
                 continue;
             }
 
             // Get center price and current line offset
             let key = grid_state_key(config)?;
+            tracing::info!("Strategy key: {key}");
             let mut grid_state = kv::get::<GridState>(&key)?
                 .unwrap_or_else(|| GridState::new(s, pool_price, config));
 
@@ -191,12 +197,15 @@ fn on_new_pool_state(
                 config.levels_per_side,
             );
 
+            tracing::info!("Grid lines: {:?}", grid_prices);
+
             // Check which grid lines (if any) were crossed
             let (new_offset, crossed_prices) =
                 compute_crossed_prices(&grid_prices, grid_state.line_offset, pool_price);
 
             // Execute buy or sell depending on direction of the new offset
             if !crossed_prices.is_empty() {
+                tracing::info!("Crossed {} grid lines", crossed_prices.len());
                 let validity_range = pool_state.get_validity_range(&config.network, 20);
                 if new_offset > grid_state.line_offset {
                     // Compute `strategy_token` to sell per grid line
@@ -223,6 +232,7 @@ fn on_new_pool_state(
                         .sum::<f64>()
                         .floor() as u64;
 
+                    tracing::info!("Selling {sell_amt}");
                     trigger_sell_strategy(config, validity_range, s, sell_amt, buy_amt)?;
 
                     // Update offset
@@ -252,6 +262,7 @@ fn on_new_pool_state(
                         .map(|price| sell_per_grid as f64 / price)
                         .sum::<f64>()
                         .floor() as u64;
+                    tracing::info!("Selling {sell_amt}");
 
                     trigger_buy_strategy(config, validity_range, s, sell_amt, buy_amt)?;
 

@@ -179,7 +179,7 @@ fn on_new_pool_state(
             let strategy_amt = asset_amount(&s.utxo, &config.strategy_token);
             tracing::info!("Strategy amount: {strategy_amt}");
             let base_amt = asset_amount(&s.utxo, &config.base_token);
-            tracing::info!("Base amount: {strategy_amt}");
+            tracing::info!("Base amount: {base_amt}");
             if strategy_amt == 0 && base_amt == 0 {
                 continue;
             }

@@ -140,38 +140,32 @@ fn compute_grid_prices(center_price: f64, spacing_percent: f64, levels_per_side:
     prices
 }
 
-fn compute_crossed_prices(
+pub fn compute_crossed_prices(
     grid_prices: &[f64],
     previous_offset: i64,
     price: f64,
 ) -> (i64, Vec<f64>) {
-    let new_offset = grid_prices.iter().take_while(|p| **p < price).count() as i64;
+    let levels_per_side = (grid_prices.len() / 2) as i64;
 
-    tracing::info!(
-        "compute_crossed_prices: price={}, previous_offset={}, new_offset={}",
-        price,
-        previous_offset,
-        new_offset
-    );
+    let new_index = grid_prices.iter().take_while(|p| **p < price).count() as i64;
+    let new_offset = new_index - levels_per_side;
+    let delta = new_offset - previous_offset;
 
-    let prices = if new_offset > previous_offset {
-        let slice = grid_prices[previous_offset as usize..new_offset as usize].to_vec();
-        tracing::info!("crossing upward: {} grid lines {:?}", slice.len(), slice);
-        slice
-    } else if new_offset < previous_offset {
-        let slice: Vec<f64> = grid_prices[new_offset as usize..previous_offset as usize]
-            .iter()
-            .rev()
-            .copied()
-            .collect();
-        tracing::info!("crossing downward: {} grid lines {:?}", slice.len(), slice);
-        slice
-    } else {
-        tracing::info!("no grid lines crossed");
-        Vec::new()
-    };
+    let mut crossed = Vec::new();
 
-    (new_offset, prices)
+    if delta > 0 {
+        for step in 1..=delta {
+            let idx = (levels_per_side + previous_offset + step - 1) as usize;
+            crossed.push(grid_prices[idx]);
+        }
+    } else if delta < 0 {
+        for step in 1..=(-delta) {
+            let idx = (levels_per_side + previous_offset - step) as usize;
+            crossed.push(grid_prices[idx]);
+        }
+    }
+
+    (new_offset, crossed)
 }
 
 fn on_new_pool_state(
@@ -378,4 +372,153 @@ fn main() -> Worker {
     Strategy::<StrategyConfig>::new()
         .on_new_pool_state(on_new_pool_state)
         .worker()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn computes_expected_grid_prices() {
+        let center = 1.0;
+        let spacing = 0.05;
+        let levels = 3;
+
+        let grid = compute_grid_prices(center, spacing, levels);
+
+        let step = 1.0 + spacing;
+
+        let expected = [
+            1.0 / step.powi(3),
+            1.0 / step.powi(2),
+            1.0 / step.powi(1),
+            1.0 * step.powi(1),
+            1.0 * step.powi(2),
+            1.0 * step.powi(3),
+        ];
+
+        assert_eq!(grid.len(), expected.len());
+
+        for (actual, expected) in grid.iter().zip(expected.iter()) {
+            assert!(
+                (actual - expected).abs() < 1e-10,
+                "expected {}, got {}",
+                expected,
+                actual
+            );
+        }
+    }
+
+    #[test]
+    fn detects_upward_crossing() {
+        let center = 1.0;
+        let spacing = 0.05;
+        let levels = 3;
+
+        let grid = compute_grid_prices(center, spacing, levels);
+
+        let previous_offset = 0;
+
+        let new_price = 1.12;
+
+        let (new_offset, crossed) = compute_crossed_prices(&grid, previous_offset, new_price);
+
+        let step = 1.0 + spacing;
+
+        let expected_crossed = [center * step.powi(1), center * step.powi(2)];
+
+        assert_eq!(crossed.len(), expected_crossed.len());
+
+        for (actual, expected) in crossed.iter().zip(expected_crossed.iter()) {
+            assert!((actual - expected).abs() < 1e-10);
+        }
+
+        assert_eq!(new_offset, previous_offset + 2);
+    }
+
+    #[test]
+    fn detects_downward_crossing() {
+        let center = 1.0;
+        let spacing = 0.05;
+        let levels = 3;
+
+        let grid = compute_grid_prices(center, spacing, levels);
+
+        let previous_offset = 0;
+
+        let new_price = 0.89;
+
+        let (new_offset, crossed) = compute_crossed_prices(&grid, previous_offset, new_price);
+
+        let step = 1.0 + spacing;
+
+        let expected = [center / step.powi(1), center / step.powi(2)];
+
+        assert_eq!(crossed.len(), expected.len());
+
+        for (actual, expected) in crossed.iter().zip(expected.iter()) {
+            assert!((actual - expected).abs() < 1e-10);
+        }
+
+        assert_eq!(new_offset, -2);
+    }
+
+    #[test]
+    fn no_grid_crossed_when_price_moves_within_band() {
+        let grid = compute_grid_prices(1.0, 0.05, 3);
+
+        let previous_offset = 0;
+
+        let new_price = 1.04;
+
+        let (new_offset, crossed) = compute_crossed_prices(&grid, previous_offset, new_price);
+
+        assert!(crossed.is_empty());
+        assert_eq!(new_offset, previous_offset);
+    }
+
+    #[test]
+    fn crossing_center_does_not_trigger_fill() {
+        let grid = compute_grid_prices(1.0, 0.05, 3);
+
+        let previous_offset = 0;
+
+        let new_price = 0.999;
+
+        let (new_offset, crossed) = compute_crossed_prices(&grid, previous_offset, new_price);
+
+        assert!(crossed.is_empty());
+        assert_eq!(new_offset, 0);
+    }
+
+    #[test]
+    fn continues_from_existing_offset() {
+        let grid = compute_grid_prices(1.0, 0.05, 3);
+
+        let previous_offset = 1;
+
+        let new_price = 1.16;
+
+        let (new_offset, crossed) = compute_crossed_prices(&grid, previous_offset, new_price);
+
+        assert_eq!(crossed.len(), 2);
+        assert_eq!(new_offset, 3);
+    }
+
+    #[test]
+    fn price_exactly_on_grid_line_does_not_fill() {
+        let center = 1.0;
+        let spacing = 0.05;
+
+        let grid = compute_grid_prices(center, spacing, 3);
+
+        let previous_offset = 0;
+
+        let new_price = grid[3];
+
+        let (new_offset, crossed) = compute_crossed_prices(&grid, previous_offset, new_price);
+
+        assert!(crossed.is_empty());
+        assert_eq!(new_offset, 0);
+    }
 }

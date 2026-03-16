@@ -168,6 +168,22 @@ pub fn compute_crossed_prices(
     (new_offset, crossed)
 }
 
+fn get_or_init_grid_state(
+    key: &str,
+    strategy: &ManagedStrategy,
+    pool_price: f64,
+    config: &StrategyConfig,
+) -> Result<GridState, balius_sdk::Error> {
+    match kv::get::<GridState>(key)? {
+        Some(state) => Ok(state),
+        None => {
+            let state = GridState::new(strategy, pool_price, config);
+            kv::set(key, &state)?;
+            Ok(state)
+        }
+    }
+}
+
 fn on_new_pool_state(
     config: &Config<StrategyConfig>,
     pool_state: &PoolState,
@@ -192,8 +208,7 @@ fn on_new_pool_state(
 
             // Get center price and current line offset
             let key = grid_state_key(config)?;
-            let mut grid_state = kv::get::<GridState>(&key)?
-                .unwrap_or_else(|| GridState::new(s, pool_price, config));
+            let mut grid_state = get_or_init_grid_state(&key, s, pool_price, config)?;
             tracing::info!("Grid state: {:?}", grid_state);
 
             // Compute grid lines

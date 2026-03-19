@@ -229,7 +229,7 @@ fn on_new_pool_state(
             // Execute buy or sell depending on direction of the new offset
             if !crossed_prices.is_empty() {
                 tracing::info!("Crossed {} grid lines", crossed_prices.len());
-                let validity_range = pool_state.get_validity_range(&config.network, 300);
+                let validity_range = pool_state.get_validity_range(&config.network, 20 * 60);
                 if new_offset > grid_state.line_offset {
                     // Compute `strategy_token` to sell per grid line
                     let sell_per_grid = grid_state.initial_strategy_amount / config.levels_per_side;

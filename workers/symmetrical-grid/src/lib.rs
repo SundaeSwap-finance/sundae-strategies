@@ -93,9 +93,9 @@ struct GridState {
 }
 
 impl GridState {
-    fn new(strategy: &ManagedStrategy, pool_price: f64, config: &StrategyConfig) -> Self {
+    fn new(strategy: &ManagedStrategy, config: &StrategyConfig) -> Self {
         Self {
-            center_price: pool_price,
+            center_price: config.center_price,
             line_offset: 0,
             initial_strategy_amount: asset_amount(&strategy.utxo, &config.strategy_token),
             initial_base_amount: asset_amount(&strategy.utxo, &config.base_token),
@@ -171,13 +171,12 @@ pub fn compute_crossed_prices(
 fn get_or_init_grid_state(
     key: &str,
     strategy: &ManagedStrategy,
-    pool_price: f64,
     config: &StrategyConfig,
 ) -> Result<GridState, balius_sdk::Error> {
     match kv::get::<GridState>(key)? {
         Some(state) => Ok(state),
         None => {
-            let state = GridState::new(strategy, pool_price, config);
+            let state = GridState::new(strategy, config);
             kv::set(key, &state)?;
             Ok(state)
         }
@@ -208,7 +207,7 @@ fn on_new_pool_state(
 
             // Get center price and current line offset
             let key = grid_state_key(config)?;
-            let mut grid_state = get_or_init_grid_state(&key, s, pool_price, config)?;
+            let mut grid_state = get_or_init_grid_state(&key, s, config)?;
             tracing::info!("Grid state: {:?}", grid_state);
 
             // Compute grid lines
